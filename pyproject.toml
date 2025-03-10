@@ -8,9 +8,10 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.12"
-twikit = "^2.3.3"
 asyncio = "^3.4.3"
 python-dotenv = "^1.0.1"
+twikit = "^2.3.3"
+google-genai = "^1.5.0"
 
 
 [build-system]
