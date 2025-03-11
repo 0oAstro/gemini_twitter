@@ -40,6 +40,8 @@ client.load_cookies('cookies.json')
 # Track the last time we checked for mentions and trends
 last_mention_check = 0
 last_trend_tweet = 0
+last_api_call = 0  # Track the last Twitter API call time
+API_CALL_DELAY = 30  # 30 seconds delay between API calls
 
 # Rate limiting - keep track of tweet timestamps in a rolling hour window
 tweet_timestamps = deque(maxlen=1000)  # Store timestamps of recent tweets
@@ -47,10 +49,32 @@ HOURLY_TWEET_LIMIT = 50  # Maximum tweets per hour
 
 tweet_id = 1899180881602044163
 
+async def api_call_with_delay(func, *args, **kwargs):
+    """Execute an API call with a delay to prevent rate limiting."""
+    global last_api_call
+    
+    current_time = time.time()
+    time_since_last_call = current_time - last_api_call
+    
+    # If less than API_CALL_DELAY seconds have passed since the last call, wait
+    if time_since_last_call < API_CALL_DELAY:
+        wait_time = API_CALL_DELAY - time_since_last_call
+        logger.debug(f"Waiting {wait_time:.1f} seconds before next API call")
+        await asyncio.sleep(wait_time)
+    
+    # Execute the API call
+    result = await func(*args, **kwargs)
+    
+    # Update the last API call time
+    last_api_call = time.time()
+    
+    return result
+
 async def get_top_replies(tweet_id, limit=3):
     """Get the top replies to a tweet."""
     try:
-        tweet = await client.get_tweet_by_id(tweet_id)
+        # Apply delay to API call
+        tweet = await api_call_with_delay(client.get_tweet_by_id, tweet_id)
         if not tweet or not tweet.replies:
             return []
         
@@ -59,7 +83,7 @@ async def get_top_replies(tweet_id, limit=3):
         top_replies = tweet.replies[:limit]
         return top_replies
     except Exception as e:
-        print(f"Error getting top replies for tweet {tweet_id}: {e}")
+        logger.error(f"Error getting top replies for tweet {tweet_id}: {e}")
         return []
 
 async def build_tweet_chain(tweet_id):
@@ -69,7 +93,8 @@ async def build_tweet_chain(tweet_id):
     
     # First, collect all tweets in the chain (from newest to oldest)
     while current_id:
-        tweet = await client.get_tweet_by_id(current_id)
+        # Apply delay to API call
+        tweet = await api_call_with_delay(client.get_tweet_by_id, current_id)
         if not tweet:
             break
         
@@ -175,10 +200,11 @@ async def get_full_conversation_text(tweet_id):
 async def get_tweet(tweet_id):
     """Get a tweet by its ID."""
     try:
-        tweet = await client.get_tweet_by_id(tweet_id)
+        # Apply delay to API call
+        tweet = await api_call_with_delay(client.get_tweet_by_id, tweet_id)
         return tweet
     except Exception as e:
-        print(f"Error fetching tweet {tweet_id}: {e}")
+        logger.error(f"Error fetching tweet {tweet_id}: {e}")
         return None
 
 def is_rate_limited():
@@ -208,8 +234,8 @@ async def post_tweet(text, reply_to=None):
             logger.warning("Rate limit reached (50 tweets/hour). Skipping tweet.")
             return None
         
-        # Post the tweet
-        tweet = await client.create_tweet(text, reply_to=reply_to)
+        # Apply delay to API call
+        tweet = await api_call_with_delay(client.create_tweet, text, reply_to=reply_to)
         
         # Record this tweet for rate limiting
         if tweet:
@@ -222,23 +248,17 @@ async def post_tweet(text, reply_to=None):
 
 async def get_trending_hashtags():
     """Get the top trending hashtags."""
-    news = await client.get_trends(category='news')
-    sports = await client.get_trends(category='sports')
-    trends = await client.get_trends(category='trending')
-    tech = await client.get_trends(category='for-you')
-    print("Top trending hashtags:", trends[0].name)
-    # SAMPLE OUTPUT:
-    # Top trending hashtags: #ChampionsTrophy2025
+    # Apply delay to API calls
+    trends = await api_call_with_delay(client.get_trends, category='trending')
+    
+    logger.info(f"Top trending hashtag: {trends[0].name if trends else 'None'}")
     return trends
     
 async def get_mentions():
     """Get the mentions of a tweet."""
-    # Search for mentions of both the current username and the old suspended account
-    notifications_current = await client.search_tweet(f"@{USERNAME}", product='Latest')
-    notifications_old = await client.search_tweet("@sup_gemini", product='Latest')
+    # Apply delay to API calls
+    notifications = await api_call_with_delay(client.search_tweet, f"@{USERNAME}", product='Latest')
     
-    # Combine the search results
-    notifications = notifications_current + notifications_old
     tweets_to_reply = []
     for notification in notifications:
         tweet_id = notification.id
@@ -564,14 +584,14 @@ async def run_scheduled_tasks():
     """Run scheduled tasks at specified intervals."""
     logger.info("Starting scheduled tasks")
     
-    mention_interval = 5 * 60  # 5 minutes
+    mention_interval = 10 * 60  # 5 minutes
     trending_interval = 30 * 60  # 30 minutes
     
     while True:
         try:
             current_time = time.time()
             
-            # Check for mentions every 5 minutes
+            # Check for mentions every 10 minutes
             if current_time - last_mention_check >= mention_interval:
                 await process_mentions()
             
@@ -592,12 +612,14 @@ async def main():
     logger.info(f"Starting sup_gemini tweet bot (@{USERNAME})...")
     
     # Initialize the timing variables
-    global last_mention_check, last_trend_tweet
+    global last_mention_check, last_trend_tweet, last_api_call
     last_mention_check = time.time() - 301  # Ensure we check mentions immediately on startup
     last_trend_tweet = time.time()  # Don't immediately post a trending tweet
+    last_api_call = time.time() - API_CALL_DELAY  # Allow immediate first API call
     
     # Log rate limit settings
     logger.info(f"Tweet rate limit set to {HOURLY_TWEET_LIMIT} tweets per hour")
+    logger.info(f"API call delay set to {API_CALL_DELAY} seconds")
     
     # Run the scheduled tasks indefinitely
     try:

@@ -5,9 +5,9 @@ from dotenv import load_dotenv
 load_dotenv()
 import os
 
-USERNAME = os.getenv('USERNAME')
-EMAIL = os.getenv('EMAIL')
-PASSWORD = os.getenv('PASSWORD')
+USERNAME = os.getenv('TWITTER_USERNAME')
+EMAIL = os.getenv('TWITTER_EMAIL')
+PASSWORD = os.getenv('TWITTER_PASSWORD')
 
 # Initialize client
 client = Client('en-US')
@@ -19,5 +19,7 @@ async def main():
         password=PASSWORD,
         cookies_file='cookies.json'
     )
+
+    await client.save_cookies('cookies.json')
 
 asyncio.run(main())
